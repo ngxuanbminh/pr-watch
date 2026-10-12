@@ -84,7 +84,11 @@ In the terminal, the pane opens docked beside the conversation when the window i
 | --- | --- | --- |
 | `pollSeconds` | `120` | How often to check GitHub; at least 30 |
 
-Set it during install, or change it later in `/config`.
+Left unset, the default applies. To change it, run `/plugin configure pr-watch@pr-watch` in Claude Code, or pass it when installing from the shell:
+
+```bash
+claude plugin install pr-watch@pr-watch --config pollSeconds=300
+```
 
 ## How it works
 
