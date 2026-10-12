@@ -1,4 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 type Count = { state: string; count: number }
@@ -256,7 +257,16 @@ test('the pane lists the PR and Ask Claude queues a prompt', async ($, on) => {
   expect(seen.prompts[0]).toContain('unit tests')
 })
 
-test('a conflicting PR of mine offers merge or rebase; a review request does not', async ($, on) => {
+const mountPane = ($: Engine, surface: 'terminal' | 'desktop') =>
+  $.ui.mount({
+    plugin: 'pr-watch',
+    surface,
+    component: 'Pane',
+    requestId: 'pr-watch',
+    props: PANE_PROPS,
+  })
+
+test('a conflicting PR of mine gets one Ask Claude that leaves the fix to Claude', async ($, on) => {
   const clock = mock.clock(on)
   const URL = 'https://github.com/acme/app/pull/1'
   let role: 'mine' | 'review' = 'mine'
@@ -268,38 +278,49 @@ test('a conflicting PR of mine offers merge or rebase; a review request does not
   await clock.settle()
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({
-      plugin: 'pr-watch',
-      surface,
-      component: 'Pane',
-      requestId: 'pr-watch',
-      props: PANE_PROPS,
-    })
+    const ui = await mountPane($, surface)
     expect(await ui.find({ text: '⚠ conflicts with main' })).toBeDefined()
-    expect(await ui.find({ key: `ask-merge:${URL}` })).toBeDefined()
-    expect(await ui.find({ key: `ask-rebase:${URL}` })).toBeDefined()
+    expect(await ui.find({ key: `ask-update:${URL}` })).toBeDefined()
     // CI is only running, so there is no CI button.
     expect(await ui.find({ key: `ask-ci:${URL}` })).toBeUndefined()
 
-    await ui.press({ key: surface === 'terminal' ? `ask-merge:${URL}` : `ask-rebase:${URL}` })
+    await ui.press({ key: `ask-update:${URL}` })
     await ui.unmount()
   }
 
   expect(seen.prompts.length).toBe(2)
-  expect(seen.prompts[0]).toContain('Merge `origin/main` into it')
-  expect(seen.prompts[1]).toContain('Rebase it onto `origin/main`')
-  expect(seen.prompts[1]).toContain('git push --force-with-lease')
+  expect(seen.prompts[0]).toContain('has merge conflicts with `main`')
+  expect(seen.prompts[0]).toContain('decide the best way to fix it')
+  expect(seen.toasts.at(-1)).toBe(
+    'Asked Claude to fix the merge conflicts on app#1; it starts once the session is idle',
+  )
 
   role = 'review'
   await clock.advance(120_000)
-  const ui = await $.ui.mount({
-    plugin: 'pr-watch',
-    surface: 'terminal',
-    component: 'Pane',
-    requestId: 'pr-watch',
-    props: PANE_PROPS,
-  })
+  const ui = await mountPane($, 'terminal')
   expect(await ui.find({ text: /Review requested \(1\)/ })).toBeDefined()
-  expect(await ui.find({ key: `ask-merge:${URL}` })).toBeUndefined()
+  expect(await ui.find({ key: `ask-update:${URL}` })).toBeUndefined()
   await ui.unmount()
+})
+
+test('a PR of mine that is behind main gets the same Ask Claude', async ($, on) => {
+  const clock = mock.clock(on)
+  const URL = 'https://github.com/acme/app/pull/1'
+  // The fixture PR merges cleanly and GitHub reports it BEHIND.
+  const seen = world(on, { cwd: '/code/app' }, () => answer(PENDING))
+
+  await $.session.start(START)
+  await clock.settle()
+
+  const ui = await mountPane($, 'desktop')
+  expect(await ui.find({ text: 'behind main' })).toBeDefined()
+  await ui.press({ key: `ask-update:${URL}` })
+  await ui.unmount()
+
+  expect(seen.prompts.length).toBe(1)
+  expect(seen.prompts[0]).toContain('is behind `main`')
+  expect(seen.prompts[0]).toContain('gh pr update-branch 1 --repo acme/app')
+  expect(seen.toasts.at(-1)).toBe(
+    'Asked Claude to bring it up to date with main on app#1; it starts once the session is idle',
+  )
 })

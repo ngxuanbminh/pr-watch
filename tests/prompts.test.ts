@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { ciPrompt, conflictPrompt } from '../hooks/prompts'
+import { ciPrompt, stalenessOf, updatePrompt } from '../hooks/prompts'
 import { pr } from './fixtures'
 
 describe('ciPrompt', () => {
@@ -13,24 +13,40 @@ describe('ciPrompt', () => {
   })
 })
 
-describe('conflictPrompt', () => {
-  const conflicted = pr({ merge: 'conflict', baseBranch: 'develop' })
-
-  test('merge brings the base branch in, in a separate worktree, without pushing', () => {
-    const text = conflictPrompt(conflicted, 'merge')
-    expect(text).toContain('has merge conflicts with `develop`; its branch is `fix-thing`.')
-    expect(text).toContain('merging `develop` into the branch')
-    expect(text).toContain('Merge `origin/develop` into it')
-    expect(text).toContain('separate git worktree')
-    expect(text).toContain('Do not push or change the PR without asking me first.')
-    expect(text).not.toContain('force')
+describe('stalenessOf', () => {
+  test('a conflict wins over being behind', () => {
+    expect(stalenessOf(pr({ merge: 'conflict', mergeStatus: 'behind' }))).toBe('conflict')
+    expect(stalenessOf(pr({ mergeStatus: 'conflict' }))).toBe('conflict')
   })
 
-  test('rebase replays onto the base branch and warns about the force-push', () => {
-    const text = conflictPrompt(conflicted, 'rebase')
-    expect(text).toContain('rebasing the branch onto `develop`')
-    expect(text).toContain('Rebase it onto `origin/develop`')
-    expect(text).toContain('git push --force-with-lease')
-    expect(text).toContain('do not push or change the PR without asking me first.')
+  test('behind, or nothing to fix', () => {
+    expect(stalenessOf(pr({ mergeStatus: 'behind' }))).toBe('behind')
+    expect(stalenessOf(pr({ mergeStatus: 'ready' }))).toBeUndefined()
+    expect(stalenessOf(pr({ mergeStatus: 'blocked' }))).toBeUndefined()
+  })
+})
+
+describe('updatePrompt', () => {
+  test('a conflict: Claude picks merge or rebase, resolves, explains, never pushes unasked', () => {
+    const text = updatePrompt(pr({ merge: 'conflict', baseBranch: 'develop' }), 'conflict')
+    expect(text).toContain('has merge conflicts with `develop`; its branch is `fix-thing`.')
+    expect(text).toContain('decide the best way to fix it')
+    expect(text).toContain('merging `develop` into the branch or rebasing it onto `develop`')
+    expect(text).toContain('Tell me what you chose and why.')
+    expect(text).toContain('separate git worktree')
+    expect(text).toContain('how you resolved each one')
+    expect(text).toContain(
+      'Do not push, force-push or update the PR on GitHub without asking me first.',
+    )
+    // GitHub's update-branch cannot resolve conflicts, so it is not offered.
+    expect(text).not.toContain('update-branch')
+  })
+
+  test('behind: update-branch is an option, and doing nothing is allowed', () => {
+    const text = updatePrompt(pr({ mergeStatus: 'behind' }), 'behind')
+    expect(text).toContain('is behind `main`; its branch is `fix-thing`.')
+    expect(text).toContain('`gh pr update-branch 1 --repo acme/app`')
+    expect(text).toContain("If updating isn't needed")
+    expect(text).not.toContain('conflict')
   })
 })

@@ -26,7 +26,7 @@ A Claude Code mod that keeps an eye on the GitHub pull requests of the repo you'
   Press **Refresh** (`r`) to check right away.
 - **Ask Claude.** Your own PRs get buttons that queue a prompt for Claude. Nothing runs unless you press one, and Claude is told not to push or change the PR without asking you first.
   - **Failing CI:** **Ask Claude** has Claude read the failing logs with `gh` and propose a fix.
-  - **Merge conflict:** **merge main in** or **rebase onto main**, whichever you prefer. Claude works on the branch in a separate git worktree, so your current checkout is left alone. It resolves the conflicts, runs the tests and type-check, and shows you how it resolved each file. After a rebase, it asks before the force-push the PR needs.
+  - **Merge conflict or behind main:** **Ask Claude** has Claude look into the problem and choose the fix itself. It picks between merging main in, rebasing onto main, or GitHub's update-branch (when the PR is only behind), and tells you which it chose and why. It weighs the repo's conventions, branch protection, and existing reviews that a force-push would disrupt. If a PR that's only behind doesn't need updating, Claude says so and stops. Claude works on the branch in a separate git worktree, so your current checkout is left alone, and it runs the tests and type-check. For conflicts, it shows you how it resolved each file.
 - **Follows the session's repo.** It reads the `origin` remote of the session's folder, so each session shows its own repo. Folders that aren't on github.com get no status line.
 
 ## Requirements
@@ -77,7 +77,7 @@ Use only one of the two install methods; otherwise the mod loads twice.
 | Details | Type `/prs` to open the pane |
 | Check now | **Refresh** in the pane, or `r` while the pane has focus |
 | Fix failing CI | **Ask Claude** under a failing PR of yours |
-| Resolve a conflict | **merge main in** or **rebase onto main** under a conflicting PR of yours |
+| Fix a conflict or catch up with main | **Ask Claude** under the Merge line of a PR of yours that conflicts or is behind |
 
 In the terminal, the pane opens docked beside the conversation when the window is wide enough, and inline when it isn't.
 

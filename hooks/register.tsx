@@ -7,7 +7,7 @@ import type { Line } from './details'
 import { CI_ICON, changes, ref, settle, summary, toastText } from './diff'
 import { GH_CANDIDATES, ghArgs, parsePrs, parseRemote, reasonOf } from './github'
 import type { FetchResult } from './github'
-import { ciPrompt, conflictPrompt } from './prompts'
+import { ciPrompt, stalenessOf, updatePrompt } from './prompts'
 
 const PANE = 'pr-watch'
 const snapshot = atom({ plugin: 'pr-watch', key: 'latest' } as const, null)
@@ -46,7 +46,10 @@ async function sessionRepo($: EngineInterface): Promise<string | null> {
 
   let repo: string | null = null
   try {
-    const ran = await $.process.run(['git', 'remote', 'get-url', 'origin'], { cwd, timeoutMs: 5_000 })
+    const ran = await $.process.run(['git', 'remote', 'get-url', 'origin'], {
+      cwd,
+      timeoutMs: 5_000,
+    })
     repo = ran.exitCode === 0 ? parseRemote(ran.stdout) : null
   } catch {
     repo = null // no git here, or the folder is gone
@@ -63,7 +66,8 @@ async function fetchPrs($: EngineInterface, repo: string): Promise<FetchResult> 
     try {
       ran = await $.process.run([gh, ...ghArgs(repo)], { timeoutMs: 30_000 })
     } catch (err) {
-      if (/timed? ?out|still running/i.test(String(err))) return { ok: false, error: 'gh timed out' }
+      if (/timed? ?out|still running/i.test(String(err)))
+        return { ok: false, error: 'gh timed out' }
       continue // not installed here; try the next place
     }
     ghPath = gh
@@ -184,8 +188,8 @@ export const register: Register = (on, options) => {
     if (snap.repo === null) {
       return (
         <Text dimColor>
-          This session's folder is not a GitHub repo (no github.com origin remote), so there are
-          no PRs to show.
+          This session's folder is not a GitHub repo (no github.com origin remote), so there are no
+          PRs to show.
         </Text>
       )
     }
@@ -203,57 +207,65 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
-    const row = (p: Pr) => (
-      <Box flexDirection="column">
-        <Box flexDirection="row" gap={1}>
-          <Text color={CI_COLOR[p.ci]}>{CI_ICON[p.ci]}</Text>
-          <Link href={p.url} label={`#${p.number}`} />
-          {tagsOf(p).map(tag => (
-            <Text color={tag.color}>{tag.text}</Text>
-          ))}
-        </Box>
-        <Box paddingLeft={2}>
-          <Text dimColor wrap="truncate-end">
-            {p.title}
-          </Text>
-        </Box>
-        {detail('CI', ciLine(p))}
-        {p.role === 'mine' && p.ci === 'failure' && (
-          <Box paddingLeft={10}>
-            <Button
-              key={`ask-ci:${p.url}`}
-              label="Ask Claude"
-              onPress={() => askClaude($, p, ciPrompt(p), 'look into failing CI')}
-            />
+    const row = (p: Pr) => {
+      const stale = stalenessOf(p)
+
+      return (
+        <Box flexDirection="column">
+          <Box flexDirection="row" gap={1}>
+            <Text color={CI_COLOR[p.ci]}>{CI_ICON[p.ci]}</Text>
+            <Link href={p.url} label={`#${p.number}`} />
+            {tagsOf(p).map(tag => (
+              <Text color={tag.color}>{tag.text}</Text>
+            ))}
           </Box>
-        )}
-        {detail('Review', reviewLine(p))}
-        {detail('Merge', mergeLine(p))}
-        {p.role === 'mine' && (p.merge === 'conflict' || p.mergeStatus === 'conflict') && (
-          <Box paddingLeft={10} flexDirection="row" gap={1}>
-            <Text dimColor>Ask Claude to</Text>
-            <Button
-              key={`ask-merge:${p.url}`}
-              label={`merge ${p.baseBranch || 'main'} in`}
-              onPress={() => askClaude($, p, conflictPrompt(p, 'merge'), 'resolve conflicts by merging')}
-            />
-            <Button
-              key={`ask-rebase:${p.url}`}
-              label={`rebase onto ${p.baseBranch || 'main'}`}
-              onPress={() => askClaude($, p, conflictPrompt(p, 'rebase'), 'resolve conflicts by rebasing')}
-            />
+          <Box paddingLeft={2}>
+            <Text dimColor wrap="truncate-end">
+              {p.title}
+            </Text>
           </Box>
-        )}
-        {detail('Size', sizeLine(p, now))}
-      </Box>
-    )
+          {detail('CI', ciLine(p))}
+          {p.role === 'mine' && p.ci === 'failure' && (
+            <Box paddingLeft={10}>
+              <Button
+                key={`ask-ci:${p.url}`}
+                label="Ask Claude"
+                onPress={() => askClaude($, p, ciPrompt(p), 'look into failing CI')}
+              />
+            </Box>
+          )}
+          {detail('Review', reviewLine(p))}
+          {detail('Merge', mergeLine(p))}
+          {p.role === 'mine' && stale !== undefined && (
+            <Box paddingLeft={10}>
+              <Button
+                key={`ask-update:${p.url}`}
+                label="Ask Claude"
+                onPress={() =>
+                  askClaude(
+                    $,
+                    p,
+                    updatePrompt(p, stale),
+                    stale === 'conflict'
+                      ? 'fix the merge conflicts'
+                      : `bring it up to date with ${p.baseBranch || 'main'}`,
+                  )
+                }
+              />
+            </Box>
+          )}
+          {detail('Size', sizeLine(p, now))}
+        </Box>
+      )
+    }
 
     return (
       <Box flexDirection="column" gap={1}>
         <Box flexDirection="row" justifyContent="space-between">
           <Text dimColor wrap="truncate-end">
-            {snap.repo} · {snap.fetchedAt === null ? 'not loaded yet' : `updated ${hhmm(snap.fetchedAt)}`}{' '}
-            · every {pollSeconds}s
+            {snap.repo} ·{' '}
+            {snap.fetchedAt === null ? 'not loaded yet' : `updated ${hhmm(snap.fetchedAt)}`} · every{' '}
+            {pollSeconds}s
           </Text>
           <Button key="refresh" label="Refresh" hotkey="r" onPress={() => poll($)} />
         </Box>
