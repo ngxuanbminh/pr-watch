@@ -1,0 +1,14 @@
+{
+  "name": "pr-watch",
+  "description": "pr-watch, a Claude Code mod that watches the GitHub PRs of the repo you are working in",
+  "owner": {
+    "name": "ngxuanbminh"
+  },
+  "plugins": [
+    {
+      "name": "pr-watch",
+      "source": "./",
+      "description": "Watches the GitHub PRs of the repo you are working in: status line, toasts on change, and a /prs pane"
+    }
+  ]
+}

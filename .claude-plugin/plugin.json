@@ -1,0 +1,19 @@
+{
+  "name": "pr-watch",
+  "version": "0.1.0",
+  "description": "Watches the GitHub PRs of the repo you are working in: status line, toasts on change, and a /prs pane with CI, review and merge details",
+  "author": {
+    "name": "ngxuanbminh"
+  },
+  "repository": "https://github.com/ngxuanbminh/pr-watch",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "pollSeconds": {
+      "type": "number",
+      "title": "Poll interval (seconds)",
+      "description": "How often pr-watch asks GitHub for PR status. At least 30.",
+      "default": 120
+    }
+  }
+}
