@@ -7,6 +7,7 @@ import type { Line } from './details'
 import { CI_ICON, changes, ref, settle, summary, toastText } from './diff'
 import { GH_CANDIDATES, ghArgs, parsePrs, parseRemote, reasonOf } from './github'
 import type { FetchResult } from './github'
+import { ciPrompt, conflictPrompt } from './prompts'
 
 const PANE = 'pr-watch'
 const snapshot = atom({ plugin: 'pr-watch', key: 'latest' } as const, null)
@@ -30,14 +31,6 @@ const hhmm = (ms: number): string => {
 
   return `${pad(at.getHours())}:${pad(at.getMinutes())}`
 }
-
-const promptFor = (p: Pr): string =>
-  [
-    `CI is failing on my pull request ${p.repo}#${p.number} "${p.title}" (${p.url}), branch \`${p.branch}\`.`,
-    `Failed checks: ${p.failedChecks.length > 0 ? p.failedChecks.join(', ') : 'not named by GitHub'}.`,
-    `Use \`gh pr checks ${p.number} --repo ${p.repo}\` and \`gh run view <run-id> --repo ${p.repo} --log-failed\` to read the failing logs.`,
-    'Explain the root cause and propose a fix. Do not push or change the PR without asking me first.',
-  ].join('\n')
 
 // Module state starts over on every reload; the snapshot itself lives in $.state.
 let pollSeconds = 120
@@ -140,11 +133,12 @@ async function poll($: EngineInterface): Promise<void> {
   }
 }
 
-function askClaude($: EngineInterface, p: Pr): void {
+/** Queues `text` as the person's own prompt; `what` names the ask in the toast. */
+function askClaude($: EngineInterface, p: Pr, text: string, what: string): void {
   void $.prompt
-    .submit({ text: promptFor(p), asUser: true })
+    .submit({ text, asUser: true })
     .catch(() => $.ui.toast(`pr-watch: could not queue the prompt for ${ref(p)}`))
-  $.ui.toast(`Asked Claude about ${ref(p)}; it starts once the session is idle`)
+  $.ui.toast(`Asked Claude to ${what} on ${ref(p)}; it starts once the session is idle`)
 }
 
 export const register: Register = (on, options) => {
@@ -226,11 +220,30 @@ export const register: Register = (on, options) => {
         {detail('CI', ciLine(p))}
         {p.role === 'mine' && p.ci === 'failure' && (
           <Box paddingLeft={10}>
-            <Button key={`ask:${p.url}`} label="Ask Claude" onPress={() => askClaude($, p)} />
+            <Button
+              key={`ask-ci:${p.url}`}
+              label="Ask Claude"
+              onPress={() => askClaude($, p, ciPrompt(p), 'look into failing CI')}
+            />
           </Box>
         )}
         {detail('Review', reviewLine(p))}
         {detail('Merge', mergeLine(p))}
+        {p.role === 'mine' && (p.merge === 'conflict' || p.mergeStatus === 'conflict') && (
+          <Box paddingLeft={10} flexDirection="row" gap={1}>
+            <Text dimColor>Ask Claude to</Text>
+            <Button
+              key={`ask-merge:${p.url}`}
+              label={`merge ${p.baseBranch || 'main'} in`}
+              onPress={() => askClaude($, p, conflictPrompt(p, 'merge'), 'resolve conflicts by merging')}
+            />
+            <Button
+              key={`ask-rebase:${p.url}`}
+              label={`rebase onto ${p.baseBranch || 'main'}`}
+              onPress={() => askClaude($, p, conflictPrompt(p, 'rebase'), 'resolve conflicts by rebasing')}
+            />
+          </Box>
+        )}
         {detail('Size', sizeLine(p, now))}
       </Box>
     )

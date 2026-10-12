@@ -24,7 +24,9 @@ A Claude Code mod that keeps an eye on the GitHub pull requests of the repo you'
   - **Size:** additions and deletions, files changed, and when the PR was last updated
 
   Press **Refresh** (`r`) to check right away.
-- **Ask Claude.** Your PRs with failing CI get an **Ask Claude** button. It queues a prompt asking Claude to read the failing logs with `gh` and propose a fix, without pushing anything. Nothing runs unless you press it.
+- **Ask Claude.** Your own PRs get buttons that queue a prompt for Claude. Nothing runs unless you press one, and Claude is told not to push or change the PR without asking you first.
+  - **Failing CI:** **Ask Claude** has Claude read the failing logs with `gh` and propose a fix.
+  - **Merge conflict:** **merge main in** or **rebase onto main**, whichever you prefer. Claude works on the branch in a separate git worktree, so your current checkout is left alone. It resolves the conflicts, runs the tests and type-check, and shows you how it resolved each file. After a rebase, it asks before the force-push the PR needs.
 - **Follows the session's repo.** It reads the `origin` remote of the session's folder, so each session shows its own repo. Folders that aren't on github.com get no status line.
 
 ## Requirements
@@ -75,6 +77,7 @@ Use only one of the two install methods; otherwise the mod loads twice.
 | Details | Type `/prs` to open the pane |
 | Check now | **Refresh** in the pane, or `r` while the pane has focus |
 | Fix failing CI | **Ask Claude** under a failing PR of yours |
+| Resolve a conflict | **merge main in** or **rebase onto main** under a conflicting PR of yours |
 
 In the terminal, the pane opens docked beside the conversation when the window is wide enough, and inline when it isn't.
 
@@ -115,6 +118,7 @@ Once Claude Code has loaded the mod, it writes its type declarations into `.clau
 | `hooks/register.tsx` | Hooks: polling, the `/prs` command, the pane, toasts, the status line |
 | `hooks/github.ts` | GraphQL query, response parsing, remote URL parsing |
 | `hooks/details.ts` | The CI, Review, Merge and Size lines |
+| `hooks/prompts.ts` | The prompts behind the Ask Claude buttons |
 | `hooks/diff.ts` | Change detection for toasts, and the status line summary |
 
 ## License

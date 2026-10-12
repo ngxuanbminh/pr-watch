@@ -28,41 +28,44 @@ const FAILING: Rollup = {
   },
 }
 
-/** A `gh api graphql` answer holding one PR of mine in `repo`. */
-const answer = (rollup: Rollup, repo = 'acme/app'): Ran => ({
-  exitCode: 0,
-  stderr: '',
-  stdout: JSON.stringify({
-    data: {
-      mine: {
-        nodes: [
-          {
-            number: 1,
-            title: 'Fix the thing',
-            url: `https://github.com/${repo}/pull/1`,
-            isDraft: false,
-            mergeable: 'MERGEABLE',
-            mergeStateStatus: 'BEHIND',
-            reviewDecision: 'APPROVED',
-            headRefName: 'fix-thing',
-            baseRefName: 'main',
-            updatedAt: '2026-10-09T10:00:00Z',
-            additions: 120,
-            deletions: 30,
-            changedFiles: 4,
-            latestOpinionatedReviews: { nodes: [{ state: 'APPROVED', author: { login: 'alice' } }] },
-            reviewRequests: { nodes: [{ requestedReviewer: { login: 'bob' } }] },
-            reviewThreads: { nodes: [{ isResolved: false }, { isResolved: true }] },
-            author: { login: 'me' },
-            repository: { nameWithOwner: repo },
-            commits: { nodes: [{ commit: { statusCheckRollup: rollup } }] },
-          },
-        ],
+type Over = { mergeable?: string; role?: 'mine' | 'review' }
+
+/** A `gh api graphql` answer holding one PR in `repo`: mine unless `over.role` says otherwise. */
+const answer = (rollup: Rollup, repo = 'acme/app', over: Over = {}): Ran => {
+  const node = {
+    number: 1,
+    title: 'Fix the thing',
+    url: `https://github.com/${repo}/pull/1`,
+    isDraft: false,
+    mergeable: over.mergeable ?? 'MERGEABLE',
+    mergeStateStatus: 'BEHIND',
+    reviewDecision: 'APPROVED',
+    headRefName: 'fix-thing',
+    baseRefName: 'main',
+    updatedAt: '2026-10-09T10:00:00Z',
+    additions: 120,
+    deletions: 30,
+    changedFiles: 4,
+    latestOpinionatedReviews: { nodes: [{ state: 'APPROVED', author: { login: 'alice' } }] },
+    reviewRequests: { nodes: [{ requestedReviewer: { login: 'bob' } }] },
+    reviewThreads: { nodes: [{ isResolved: false }, { isResolved: true }] },
+    author: { login: 'me' },
+    repository: { nameWithOwner: repo },
+    commits: { nodes: [{ commit: { statusCheckRollup: rollup } }] },
+  }
+  const isMine = (over.role ?? 'mine') === 'mine'
+
+  return {
+    exitCode: 0,
+    stderr: '',
+    stdout: JSON.stringify({
+      data: {
+        mine: { nodes: isMine ? [node] : [] },
+        review: { nodes: isMine ? [] : [node] },
       },
-      review: { nodes: [] },
-    },
-  }),
-})
+    }),
+  }
+}
 
 /** The folders the tests run in, and their origin remotes. */
 const REMOTES: Record<string, string> = {
@@ -244,11 +247,59 @@ test('the pane lists the PR and Ask Claude queues a prompt', async ($, on) => {
     expect(await ui.find({ text: 'behind main' })).toBeDefined()
     expect(await ui.find({ text: /^\+120 −30 · 4 files/ })).toBeDefined()
 
-    await ui.press({ key: 'ask:https://github.com/acme/app/pull/1' })
+    await ui.press({ key: 'ask-ci:https://github.com/acme/app/pull/1' })
     await ui.unmount()
   }
 
   expect(seen.prompts.length).toBe(2)
   expect(seen.prompts[0]).toContain('acme/app#1')
   expect(seen.prompts[0]).toContain('unit tests')
+})
+
+test('a conflicting PR of mine offers merge or rebase; a review request does not', async ($, on) => {
+  const clock = mock.clock(on)
+  const URL = 'https://github.com/acme/app/pull/1'
+  let role: 'mine' | 'review' = 'mine'
+  const seen = world(on, { cwd: '/code/app' }, () =>
+    answer(PENDING, 'acme/app', { mergeable: 'CONFLICTING', role }),
+  )
+
+  await $.session.start(START)
+  await clock.settle()
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({
+      plugin: 'pr-watch',
+      surface,
+      component: 'Pane',
+      requestId: 'pr-watch',
+      props: PANE_PROPS,
+    })
+    expect(await ui.find({ text: '⚠ conflicts with main' })).toBeDefined()
+    expect(await ui.find({ key: `ask-merge:${URL}` })).toBeDefined()
+    expect(await ui.find({ key: `ask-rebase:${URL}` })).toBeDefined()
+    // CI is only running, so there is no CI button.
+    expect(await ui.find({ key: `ask-ci:${URL}` })).toBeUndefined()
+
+    await ui.press({ key: surface === 'terminal' ? `ask-merge:${URL}` : `ask-rebase:${URL}` })
+    await ui.unmount()
+  }
+
+  expect(seen.prompts.length).toBe(2)
+  expect(seen.prompts[0]).toContain('Merge `origin/main` into it')
+  expect(seen.prompts[1]).toContain('Rebase it onto `origin/main`')
+  expect(seen.prompts[1]).toContain('git push --force-with-lease')
+
+  role = 'review'
+  await clock.advance(120_000)
+  const ui = await $.ui.mount({
+    plugin: 'pr-watch',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'pr-watch',
+    props: PANE_PROPS,
+  })
+  expect(await ui.find({ text: /Review requested \(1\)/ })).toBeDefined()
+  expect(await ui.find({ key: `ask-merge:${URL}` })).toBeUndefined()
+  await ui.unmount()
 })
