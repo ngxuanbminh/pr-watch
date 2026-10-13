@@ -1,16 +1,19 @@
 import { atom, read, update } from 'claude-code'
 import type { Color, EngineInterface, Register } from 'claude-code'
 
-import type { CiState, Pr, Snapshot } from '../types'
+import type { CiState, MergeMethod, Pr, Snapshot } from '../types'
 import { ciLine, mergeLine, reviewLine, sizeLine } from './details'
 import type { Line } from './details'
 import { CI_ICON, changes, ref, settle, summary, toastText } from './diff'
 import { GH_CANDIDATES, ghArgs, parsePrs, parseRemote, reasonOf } from './github'
 import type { FetchResult } from './github'
+import { canMerge, mergeArgs, mergeFailure, mergeLabel } from './merge'
 import { ciPrompt, stalenessOf, updatePrompt } from './prompts'
 
 const PANE = 'pr-watch'
 const snapshot = atom({ plugin: 'pr-watch', key: 'latest' } as const, null)
+const confirming = atom({ plugin: 'pr-watch', key: 'confirming' } as const, null)
+const merging = atom({ plugin: 'pr-watch', key: 'merging' } as const, null)
 
 const CI_COLOR: Record<CiState, Color> = {
   success: 'success',
@@ -38,6 +41,8 @@ let isPolling = false
 let isPollWanted = false
 let ghPath: string | undefined
 let repoOf: { cwd: string; repo: string | null } | undefined
+// PRs merged from the pane: their "closed or merged" toast would only repeat "Merged".
+const mergedHere = new Set<string>()
 
 /** The session folder's github.com repo (`owner/name`), or null; asks git once per folder. */
 async function sessionRepo($: EngineInterface): Promise<string | null> {
@@ -59,32 +64,50 @@ async function sessionRepo($: EngineInterface): Promise<string | null> {
   return repo
 }
 
-/** Runs the repo's PR query through the person's `gh`, finding it on first use. */
-async function fetchPrs($: EngineInterface, repo: string): Promise<FetchResult> {
+type GhRun =
+  | { ok: true; exitCode: number; stdout: string; stderr: string }
+  | { ok: false; error: string }
+
+/** Runs the person's `gh` with `args`, finding it on first use. */
+async function runGh($: EngineInterface, args: readonly string[]): Promise<GhRun> {
   for (const gh of ghPath === undefined ? GH_CANDIDATES : [ghPath]) {
     let ran
     try {
-      ran = await $.process.run([gh, ...ghArgs(repo)], { timeoutMs: 30_000 })
+      ran = await $.process.run([gh, ...args], { timeoutMs: 30_000 })
     } catch (err) {
       if (/timed? ?out|still running/i.test(String(err)))
         return { ok: false, error: 'gh timed out' }
       continue // not installed here; try the next place
     }
     ghPath = gh
-    if (ran.exitCode !== 0) return { ok: false, error: reasonOf(ran.stderr) }
 
-    return parsePrs(ran.stdout)
+    return { ok: true, exitCode: ran.exitCode, stdout: ran.stdout, stderr: ran.stderr }
   }
   ghPath = undefined
 
   return { ok: false, error: 'gh not found' }
 }
 
+/** Runs the repo's PR query. */
+async function fetchPrs($: EngineInterface, repo: string): Promise<FetchResult> {
+  const ran = await runGh($, ghArgs(repo))
+  if (!ran.ok) return ran
+  if (ran.exitCode !== 0) return { ok: false, error: reasonOf(ran.stderr) }
+
+  return parsePrs(ran.stdout)
+}
+
 /** One poll: find the repo, fetch, toast what changed since the last good poll, store, show. */
 async function pollOnce($: EngineInterface): Promise<void> {
   const repo = await sessionRepo($)
   if (repo === null) {
-    await update($, snapshot, () => ({ repo: null, prs: [], fetchedAt: null, error: null }))
+    await update($, snapshot, () => ({
+      repo: null,
+      mergeMethod: null,
+      prs: [],
+      fetchedAt: null,
+      error: null,
+    }))
     $.ui.status(undefined)
     return
   }
@@ -97,6 +120,7 @@ async function pollOnce($: EngineInterface): Promise<void> {
   if (!result.ok) {
     const failed: Snapshot = {
       repo,
+      mergeMethod: prev?.mergeMethod ?? null,
       prs: prev?.prs ?? [],
       fetchedAt: prev?.fetchedAt ?? null,
       error: result.error,
@@ -109,11 +133,21 @@ async function pollOnce($: EngineInterface): Promise<void> {
   const prs = settle(prev?.prs, result.prs)
   // The first good poll is the baseline: nothing is new to the person yet.
   if (prev !== null && prev.fetchedAt !== null) {
-    const text = toastText(changes(prev.prs, prs))
+    const found = changes(prev.prs, prs).filter(
+      c => !(c.what === 'closed or merged' && mergedHere.has(c.pr.url)),
+    )
+    const text = toastText(found)
     if (text !== undefined) $.ui.toast(text, { timeoutMs: 10_000 })
   }
 
-  const fresh: Snapshot = { repo, prs, fetchedAt: await $.clock.now(), error: null }
+  mergedHere.clear()
+  const fresh: Snapshot = {
+    repo,
+    mergeMethod: result.mergeMethod,
+    prs,
+    fetchedAt: await $.clock.now(),
+    error: null,
+  }
   await update($, snapshot, () => fresh)
   $.ui.status(summary(fresh))
 }
@@ -143,6 +177,28 @@ function askClaude($: EngineInterface, p: Pr, text: string, what: string): void 
     .submit({ text, asUser: true })
     .catch(() => $.ui.toast(`pr-watch: could not queue the prompt for ${ref(p)}`))
   $.ui.toast(`Asked Claude to ${what} on ${ref(p)}; it starts once the session is idle`)
+}
+
+/** Merges `p` as the pane showed it (Confirm was pressed), says how it went, and refreshes. */
+async function mergePr($: EngineInterface, p: Pr, method: MergeMethod): Promise<void> {
+  if ((await read($, merging)) !== null) return
+  await update($, confirming, () => null)
+  await update($, merging, () => p.url)
+
+  let said: string
+  try {
+    const ran = await runGh($, mergeArgs(p, method))
+    if (!ran.ok) said = `Could not merge ${ref(p)}: ${ran.error}`
+    else if (ran.exitCode !== 0) said = `Could not merge ${ref(p)}: ${mergeFailure(ran.stderr)}`
+    else {
+      mergedHere.add(p.url)
+      said = `Merged ${ref(p)} into ${p.baseBranch || 'main'}`
+    }
+  } finally {
+    await update($, merging, () => null)
+  }
+  $.ui.toast(said, { timeoutMs: 10_000 })
+  await poll($)
 }
 
 export const register: Register = (on, options) => {
@@ -194,6 +250,9 @@ export const register: Register = (on, options) => {
       )
     }
 
+    const confirmingUrl = await read($, confirming)
+    const mergingUrl = await read($, merging)
+    const method = snap.mergeMethod ?? null
     const mine = snap.prs.filter(p => p.role === 'mine')
     const asked = snap.prs.filter(p => p.role === 'review')
     const now = snap.fetchedAt ?? 0
@@ -208,7 +267,9 @@ export const register: Register = (on, options) => {
     )
 
     const row = (p: Pr) => {
-      const stale = stalenessOf(p)
+      const stale = p.role === 'mine' ? stalenessOf(p) : undefined
+      const mergeWith = method !== null && canMerge(p) ? method : null
+      const isConfirming = mergeWith !== null && confirmingUrl === p.url && mergingUrl !== p.url
 
       return (
         <Box flexDirection="column">
@@ -236,21 +297,49 @@ export const register: Register = (on, options) => {
           )}
           {detail('Review', reviewLine(p))}
           {detail('Merge', mergeLine(p))}
-          {p.role === 'mine' && stale !== undefined && (
-            <Box paddingLeft={10}>
+          {(stale !== undefined || mergeWith !== null) && (
+            <Box paddingLeft={10} flexDirection="row" gap={1} flexWrap="wrap">
+              {stale !== undefined && (
+                <Button
+                  key={`ask-update:${p.url}`}
+                  label="Ask Claude"
+                  onPress={() =>
+                    askClaude(
+                      $,
+                      p,
+                      updatePrompt(p, stale),
+                      stale === 'conflict'
+                        ? 'fix the merge conflicts'
+                        : `bring it up to date with ${p.baseBranch || 'main'}`,
+                    )
+                  }
+                />
+              )}
+              {mergeWith !== null && mergingUrl === p.url && <Text color="warning">Merging…</Text>}
+              {mergeWith !== null && mergingUrl !== p.url && !isConfirming && (
+                <Button
+                  key={`merge:${p.url}`}
+                  label={mergeLabel(mergeWith)}
+                  onPress={() => update($, confirming, () => p.url)}
+                />
+              )}
+            </Box>
+          )}
+          {mergeWith !== null && isConfirming && (
+            <Box paddingLeft={10} flexDirection="row" gap={1} flexWrap="wrap">
+              <Text color="warning">
+                {`${mergeLabel(mergeWith)} #${p.number} into ${p.baseBranch || 'main'}?`}
+              </Text>
               <Button
-                key={`ask-update:${p.url}`}
-                label="Ask Claude"
-                onPress={() =>
-                  askClaude(
-                    $,
-                    p,
-                    updatePrompt(p, stale),
-                    stale === 'conflict'
-                      ? 'fix the merge conflicts'
-                      : `bring it up to date with ${p.baseBranch || 'main'}`,
-                  )
-                }
+                key={`merge-confirm:${p.url}`}
+                label="Confirm"
+                variant="primary"
+                onPress={() => mergePr($, p, mergeWith)}
+              />
+              <Button
+                key={`merge-cancel:${p.url}`}
+                label="Cancel"
+                onPress={() => update($, confirming, () => null)}
               />
             </Box>
           )}

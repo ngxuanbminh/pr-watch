@@ -17,6 +17,14 @@ const PENDING: Rollup = {
     nodes: [{ __typename: 'CheckRun', name: 'unit tests', conclusion: null }],
   },
 }
+const PASSING: Rollup = {
+  state: 'SUCCESS',
+  contexts: {
+    checkRunCountsByState: [{ state: 'SUCCESS', count: 4 }],
+    statusContextCountsByState: [],
+    nodes: [{ __typename: 'CheckRun', name: 'unit tests', conclusion: 'SUCCESS' }],
+  },
+}
 const FAILING: Rollup = {
   state: 'FAILURE',
   contexts: {
@@ -29,7 +37,7 @@ const FAILING: Rollup = {
   },
 }
 
-type Over = { mergeable?: string; role?: 'mine' | 'review' }
+type Over = { mergeable?: string; role?: 'mine' | 'review'; none?: boolean }
 
 /** A `gh api graphql` answer holding one PR in `repo`: mine unless `over.role` says otherwise. */
 const answer = (rollup: Rollup, repo = 'acme/app', over: Over = {}): Ran => {
@@ -42,6 +50,7 @@ const answer = (rollup: Rollup, repo = 'acme/app', over: Over = {}): Ran => {
     mergeStateStatus: 'BEHIND',
     reviewDecision: 'APPROVED',
     headRefName: 'fix-thing',
+    headRefOid: 'abc123',
     baseRefName: 'main',
     updatedAt: '2026-10-09T10:00:00Z',
     additions: 120,
@@ -55,14 +64,16 @@ const answer = (rollup: Rollup, repo = 'acme/app', over: Over = {}): Ran => {
     commits: { nodes: [{ commit: { statusCheckRollup: rollup } }] },
   }
   const isMine = (over.role ?? 'mine') === 'mine'
+  const nodes = over.none === true ? [] : [node]
 
   return {
     exitCode: 0,
     stderr: '',
     stdout: JSON.stringify({
       data: {
-        mine: { nodes: isMine ? [node] : [] },
-        review: { nodes: isMine ? [] : [node] },
+        repo: { viewerDefaultMergeMethod: 'SQUASH' },
+        mine: { nodes: isMine ? nodes : [] },
+        review: { nodes: isMine ? [] : nodes },
       },
     }),
   }
@@ -323,4 +334,92 @@ test('a PR of mine that is behind main gets the same Ask Claude', async ($, on) 
   expect(seen.toasts.at(-1)).toBe(
     'Asked Claude to bring it up to date with main on app#1; it starts once the session is idle',
   )
+})
+
+test('an approved PR of mine merges only after Confirm, pinned to the head it showed', async ($, on) => {
+  const clock = mock.clock(on)
+  const URL = 'https://github.com/acme/app/pull/1'
+  const merges: string[][] = []
+  const seen = world(on, { cwd: '/code/app' }, args => {
+    if (args[0] === 'pr') {
+      merges.push([...args])
+      return { exitCode: 0, stdout: '', stderr: '' }
+    }
+    // Once merged, the PR is no longer open.
+    return answer(PASSING, 'acme/app', { none: merges.length > 0 })
+  })
+
+  await $.session.start(START)
+  await clock.settle()
+
+  const ui = await mountPane($, 'desktop')
+  // Approved, CI green, behind main: the merge button beside Ask Claude.
+  expect(await ui.find({ key: `ask-update:${URL}` })).toBeDefined()
+  expect(await ui.find({ key: `merge:${URL}` })).toBeDefined()
+  expect(await ui.find({ text: 'Squash and merge' })).toBeDefined()
+
+  // The first press only asks.
+  await ui.press({ key: `merge:${URL}` })
+  expect(await ui.find({ text: 'Squash and merge #1 into main?' })).toBeDefined()
+  expect(await ui.find({ key: `merge:${URL}` })).toBeUndefined()
+  expect(merges).toEqual([])
+
+  // Cancel goes back.
+  await ui.press({ key: `merge-cancel:${URL}` })
+  expect(await ui.find({ key: `merge-confirm:${URL}` })).toBeUndefined()
+  expect(await ui.find({ key: `merge:${URL}` })).toBeDefined()
+  expect(merges).toEqual([])
+
+  // Confirm merges, by repo, pinned to the head commit.
+  await ui.press({ key: `merge:${URL}` })
+  await ui.press({ key: `merge-confirm:${URL}` })
+  expect(merges).toEqual([
+    ['pr', 'merge', '1', '--repo', 'acme/app', '--squash', '--match-head-commit', 'abc123'],
+  ])
+  expect(seen.toasts).toContain('Merged app#1 into main')
+  // The refresh sees it gone, and does not toast "closed or merged" on top.
+  expect(seen.toasts.filter(t => t.includes('closed or merged'))).toEqual([])
+  expect(seen.statuses.at(-1)).toBe('app · PRs: none open')
+  await ui.unmount()
+})
+
+test('a refused merge says why and leaves the PR as it was', async ($, on) => {
+  const clock = mock.clock(on)
+  const URL = 'https://github.com/acme/app/pull/1'
+  const seen = world(on, { cwd: '/code/app' }, args =>
+    args[0] === 'pr'
+      ? {
+          exitCode: 1,
+          stdout: '',
+          stderr:
+            'X Pull request acme/app#1 is not mergeable: the base branch policy prohibits the merge.\n',
+        }
+      : answer(PASSING),
+  )
+
+  await $.session.start(START)
+  await clock.settle()
+
+  const ui = await mountPane($, 'terminal')
+  await ui.press({ key: `merge:${URL}` })
+  await ui.press({ key: `merge-confirm:${URL}` })
+  expect(seen.toasts.at(-1)).toBe(
+    'Could not merge app#1: Pull request acme/app#1 is not mergeable: the base branch policy prohibits the merge.',
+  )
+  expect(await ui.find({ text: /Your PRs \(1\)/ })).toBeDefined()
+  expect(await ui.find({ key: `merge:${URL}` })).toBeDefined()
+  await ui.unmount()
+})
+
+test('no merge button on a review request, even an approved one', async ($, on) => {
+  const clock = mock.clock(on)
+  world(on, { cwd: '/code/app' }, () => answer(PASSING, 'acme/app', { role: 'review' }))
+
+  await $.session.start(START)
+  await clock.settle()
+
+  const ui = await mountPane($, 'terminal')
+  expect(await ui.find({ text: /Review requested \(1\)/ })).toBeDefined()
+  expect(await ui.find({ key: 'merge:https://github.com/acme/app/pull/1' })).toBeUndefined()
+  await ui.unmount()
 })

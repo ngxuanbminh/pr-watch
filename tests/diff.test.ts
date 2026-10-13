@@ -11,9 +11,9 @@ describe('changes', () => {
 
   test('CI turning green after pending or failing is reported', () => {
     expect(changes([pr()], [pr({ ci: 'success' })]).map(c => c.what)).toEqual(['CI passed'])
-    expect(
-      changes([pr({ ci: 'failure' })], [pr({ ci: 'success' })]).map(c => c.what),
-    ).toEqual(['CI passed'])
+    expect(changes([pr({ ci: 'failure' })], [pr({ ci: 'success' })]).map(c => c.what)).toEqual([
+      'CI passed',
+    ])
   })
 
   test('an unchanged PR reports nothing', () => {
@@ -21,9 +21,7 @@ describe('changes', () => {
   })
 
   test('review decisions are reported', () => {
-    expect(changes([pr()], [pr({ review: 'approved' })]).map(c => c.what)).toEqual([
-      'approved',
-    ])
+    expect(changes([pr()], [pr({ review: 'approved' })]).map(c => c.what)).toEqual(['approved'])
     expect(changes([pr()], [pr({ review: 'changes' })]).map(c => c.what)).toEqual([
       'changes requested',
     ])
@@ -59,6 +57,11 @@ describe('settle', () => {
     expect(one?.merge).toBe('conflict')
   })
 
+  test('an unknown merge status keeps the previous one too', () => {
+    const [one] = settle([pr({ mergeStatus: 'ready' })], [pr({ mergeStatus: 'unknown' })])
+    expect(one?.mergeStatus).toBe('ready')
+  })
+
   test('a known merge state wins', () => {
     const [one] = settle([pr({ merge: 'conflict' })], [pr({ merge: 'clean' })])
     expect(one?.merge).toBe('clean')
@@ -76,31 +79,39 @@ describe('summary', () => {
       pr({ url: 'd', ci: 'pending' }),
       pr({ url: 'e', role: 'review' }),
     ]
-    expect(summary({ repo: REPO, prs, fetchedAt: 1, error: null })).toBe(
+    expect(summary({ repo: REPO, mergeMethod: null, prs, fetchedAt: 1, error: null })).toBe(
       'app · PRs ✓2 ✗1 ●1 · 1 conflict · 1 to review',
     )
   })
 
   test('says when nothing is open', () => {
-    expect(summary({ repo: REPO, prs: [], fetchedAt: 1, error: null })).toBe(
+    expect(summary({ repo: REPO, mergeMethod: null, prs: [], fetchedAt: 1, error: null })).toBe(
       'app · PRs: none open',
     )
   })
 
   test('shows the error beside the last good counts', () => {
     expect(
-      summary({ repo: REPO, prs: [pr({ ci: 'success' })], fetchedAt: 1, error: 'gh not logged in' }),
+      summary({
+        repo: REPO,
+        mergeMethod: null,
+        prs: [pr({ ci: 'success' })],
+        fetchedAt: 1,
+        error: 'gh not logged in',
+      }),
     ).toBe('app · PRs ✓1 · ⚠ gh not logged in')
   })
 
   test('shows the error alone before any good poll', () => {
-    expect(summary({ repo: REPO, prs: [], fetchedAt: null, error: 'gh not found' })).toBe(
-      'app · PRs ⚠ gh not found',
-    )
+    expect(
+      summary({ repo: REPO, mergeMethod: null, prs: [], fetchedAt: null, error: 'gh not found' }),
+    ).toBe('app · PRs ⚠ gh not found')
   })
 
   test('has no line outside a GitHub repo', () => {
-    expect(summary({ repo: null, prs: [], fetchedAt: null, error: null })).toBeUndefined()
+    expect(
+      summary({ repo: null, mergeMethod: null, prs: [], fetchedAt: null, error: null }),
+    ).toBeUndefined()
   })
 })
 

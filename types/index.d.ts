@@ -4,6 +4,9 @@ export type MergeState = 'clean' | 'conflict' | 'unknown'
 /** GitHub's merge state status, as the pane words it. */
 export type MergeStatus = 'ready' | 'behind' | 'blocked' | 'unstable' | 'conflict' | 'draft' | 'unknown'
 
+/** How GitHub merges a PR: what `gh pr merge --merge | --squash | --rebase` names. */
+export type MergeMethod = 'merge' | 'squash' | 'rebase'
+
 /** The head commit's checks, counted by outcome. */
 export type Checks = { passed: number; failed: number; pending: number; skipped: number }
 
@@ -25,6 +28,8 @@ export type Pr = {
   author: string
   branch: string
   baseBranch: string
+  /** The head commit; a merge is refused if the PR has moved past it. */
+  headSha: string
   isDraft: boolean
   ci: CiState
   checks: Checks
@@ -48,6 +53,8 @@ export type Pr = {
  */
 export type Snapshot = {
   repo: string | null
+  /** The method GitHub preselects for you in this repo (null: unknown). */
+  mergeMethod: MergeMethod | null
   prs: Pr[]
   fetchedAt: number | null
   error: string | null
@@ -57,6 +64,12 @@ declare module 'claude-code' {
   interface PluginState {
     // `latest` replaced `snapshot` when PRs gained their detail fields, so a
     // reload never draws a PR stored in the older shape.
-    'pr-watch': { latest: Snapshot | null }
+    'pr-watch': {
+      latest: Snapshot | null
+      /** The PR (by URL) whose merge waits for Confirm, if any. */
+      confirming: string | null
+      /** The PR (by URL) being merged right now, if any. */
+      merging: string | null
+    }
   }
 }

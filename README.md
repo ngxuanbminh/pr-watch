@@ -27,6 +27,12 @@ A Claude Code mod that keeps an eye on the GitHub pull requests of the repo you'
 - **Ask Claude.** Your own PRs get buttons that queue a prompt for Claude. Nothing runs unless you press one, and Claude is told not to push or change the PR without asking you first.
   - **Failing CI:** **Ask Claude** has Claude read the failing logs with `gh` and propose a fix.
   - **Merge conflict or behind main:** **Ask Claude** has Claude look into the problem and choose the fix itself. It picks between merging main in, rebasing onto main, or GitHub's update-branch (when the PR is only behind), and tells you which it chose and why. It weighs the repo's conventions, branch protection, and existing reviews that a force-push would disrupt. If a PR that's only behind doesn't need updating, Claude says so and stops. Claude works on the branch in a separate git worktree, so your current checkout is left alone, and it runs the tests and type-check. For conflicts, it shows you how it resolved each file.
+- **Merge.** Your approved PRs that GitHub would merge right now get a merge button, labeled like GitHub's own (**Squash and merge**, **Merge**, or **Rebase and merge**, whichever GitHub preselects for you in that repo).
+  - "Right now" means CI is not failing or running, there's no conflict, the PR is not a draft, and branch rules don't block it.
+  - Pressing it only asks: *Squash and merge #405 into main? [Confirm] [Cancel]*. Nothing merges until you press **Confirm**.
+  - The merge is pinned to the head commit the pane showed, so GitHub refuses it if someone pushed after the pane last loaded.
+  - It runs by repo name, so it doesn't touch your local checkout or branches. Deleting the branch follows the repo's own setting, as on GitHub.
+  - A toast says it merged, or gives GitHub's reason if it refused.
 - **Follows the session's repo.** It reads the `origin` remote of the session's folder, so each session shows its own repo. Folders that aren't on github.com get no status line.
 
 ## Requirements
@@ -78,6 +84,7 @@ Use only one of the two install methods; otherwise the mod loads twice.
 | Check now | **Refresh** in the pane, or `r` while the pane has focus |
 | Fix failing CI | **Ask Claude** under a failing PR of yours |
 | Fix a conflict or catch up with main | **Ask Claude** under the Merge line of a PR of yours that conflicts or is behind |
+| Merge an approved PR | The merge button under its Merge line, then **Confirm** |
 
 In the terminal, the pane opens docked beside the conversation when the window is wide enough, and inline when it isn't.
 
@@ -119,6 +126,7 @@ Once Claude Code has loaded the mod, it writes its type declarations into `.clau
 | `hooks/github.ts` | GraphQL query, response parsing, remote URL parsing |
 | `hooks/details.ts` | The CI, Review, Merge and Size lines |
 | `hooks/prompts.ts` | The prompts behind the Ask Claude buttons |
+| `hooks/merge.ts` | When the merge button shows, and the `gh pr merge` it runs |
 | `hooks/diff.ts` | Change detection for toasts, and the status line summary |
 
 ## License

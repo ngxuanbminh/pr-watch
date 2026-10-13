@@ -14,8 +14,9 @@ export const CI_ICON: Record<CiState, string> = {
 }
 
 /**
- * GitHub answers `UNKNOWN` for mergeability while it recomputes (after every
- * push); keep the previous known state so a conflict is not reported twice.
+ * GitHub answers `UNKNOWN` for mergeability and merge state while it
+ * recomputes (after every push); keep the previous known values so a conflict
+ * is not reported twice and the Merge line and its buttons don't flicker.
  */
 export const settle = (prev: readonly Pr[] | undefined, next: readonly Pr[]): Pr[] => {
   const before = new Map((prev ?? []).map(p => [p.url, p]))
@@ -23,7 +24,13 @@ export const settle = (prev: readonly Pr[] | undefined, next: readonly Pr[]): Pr
   return next.map(p => {
     const old = before.get(p.url)
 
-    return p.merge === 'unknown' && old !== undefined ? { ...p, merge: old.merge } : p
+    if (old === undefined) return p
+
+    return {
+      ...p,
+      merge: p.merge === 'unknown' ? old.merge : p.merge,
+      mergeStatus: p.mergeStatus === 'unknown' ? old.mergeStatus : p.mergeStatus,
+    }
   })
 }
 

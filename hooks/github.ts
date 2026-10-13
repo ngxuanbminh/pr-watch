@@ -1,16 +1,27 @@
-import type { Checks, CiState, MergeState, MergeStatus, Pr, ReviewState, Reviews } from '../types'
+import type {
+  Checks,
+  CiState,
+  MergeMethod,
+  MergeState,
+  MergeStatus,
+  Pr,
+  ReviewState,
+  Reviews,
+} from '../types'
 
 // Two searches in one request: the PRs you opened in the repo, and the ones
-// there waiting on your review. About 6 rate-limit points per poll.
+// there waiting on your review, plus the merge method GitHub preselects for
+// you there. About 6 rate-limit points per poll.
 export const QUERY = `
-query($mine: String!, $review: String!) {
+query($mine: String!, $review: String!, $owner: String!, $name: String!) {
   viewer { login }
+  repo: repository(owner: $owner, name: $name) { viewerDefaultMergeMethod }
   mine: search(query: $mine, type: ISSUE, first: 50) { nodes { ...pr } }
   review: search(query: $review, type: ISSUE, first: 50) { nodes { ...pr } }
 }
 fragment pr on PullRequest {
   number title url isDraft mergeable mergeStateStatus reviewDecision
-  headRefName baseRefName updatedAt additions deletions changedFiles
+  headRefName headRefOid baseRefName updatedAt additions deletions changedFiles
   author { login }
   repository { nameWithOwner }
   latestOpinionatedReviews(first: 10) { nodes { state author { login } } }
@@ -39,16 +50,24 @@ fragment pr on PullRequest {
 // The session's PATH may not reach Homebrew's bin (an app-started session).
 export const GH_CANDIDATES = ['gh', '/opt/homebrew/bin/gh', '/usr/local/bin/gh', '/usr/bin/gh']
 /** The `gh` arguments of one poll, both searches held to `repo` (`owner/name`). */
-export const ghArgs = (repo: string): string[] => [
-  'api',
-  'graphql',
-  '-f',
-  `query=${QUERY}`,
-  '-f',
-  `mine=is:open is:pr archived:false author:@me repo:${repo}`,
-  '-f',
-  `review=is:open is:pr archived:false review-requested:@me repo:${repo}`,
-]
+export const ghArgs = (repo: string): string[] => {
+  const [owner = '', name = ''] = repo.split('/')
+
+  return [
+    'api',
+    'graphql',
+    '-f',
+    `query=${QUERY}`,
+    '-f',
+    `mine=is:open is:pr archived:false author:@me repo:${repo}`,
+    '-f',
+    `review=is:open is:pr archived:false review-requested:@me repo:${repo}`,
+    '-f',
+    `owner=${owner}`,
+    '-f',
+    `name=${name}`,
+  ]
+}
 
 /**
  * `owner/name` of a github.com remote URL (https, ssh or scp form), or null
@@ -90,6 +109,7 @@ type RawPr = {
   mergeStateStatus?: string
   reviewDecision?: string | null
   headRefName?: string
+  headRefOid?: string
   baseRefName?: string
   updatedAt?: string
   additions?: number
@@ -120,13 +140,18 @@ type RawPr = {
 type RawResponse = {
   data?: {
     viewer?: { login?: string }
+    repo?: { viewerDefaultMergeMethod?: string } | null
     mine?: { nodes?: RawPr[] }
     review?: { nodes?: RawPr[] }
   }
   errors?: { message?: string }[]
 }
 
-export type FetchResult = { ok: true; prs: Pr[] } | { ok: false; error: string }
+export type FetchResult =
+  | { ok: true; prs: Pr[]; mergeMethod: MergeMethod | null }
+  | { ok: false; error: string }
+
+const METHODS: Record<string, MergeMethod> = { MERGE: 'merge', SQUASH: 'squash', REBASE: 'rebase' }
 
 const ciOf = (state: string | undefined): CiState => {
   if (state === 'SUCCESS') return 'success'
@@ -206,6 +231,7 @@ const toPr = (raw: RawPr, role: Pr['role'], viewer: string | undefined): Pr | un
     author: raw.author?.login ?? 'ghost',
     branch: raw.headRefName ?? '',
     baseBranch: raw.baseRefName ?? '',
+    headSha: raw.headRefOid ?? '',
     isDraft: raw.isDraft === true,
     ci: ciOf(rollup?.state),
     checks: checksOf([
@@ -249,7 +275,9 @@ export const parsePrs = (body: string): FetchResult => {
     prs.push(p)
   }
 
-  return { ok: true, prs }
+  const mergeMethod = METHODS[raw.data.repo?.viewerDefaultMergeMethod ?? ''] ?? null
+
+  return { ok: true, prs, mergeMethod }
 }
 
 /** A short reason for a failed `gh` run, fit for the status line. */

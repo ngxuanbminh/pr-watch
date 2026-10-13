@@ -9,6 +9,7 @@ export const pr = (over: Partial<Pr> = {}): Pr => ({
   author: 'me',
   branch: 'fix-thing',
   baseBranch: 'main',
+  headSha: 'abc123',
   isDraft: false,
   ci: 'pending',
   checks: { passed: 0, failed: 0, pending: 1, skipped: 0 },
