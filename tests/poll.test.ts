@@ -87,14 +87,22 @@ const REMOTES: Record<string, string> = {
 
 /**
  * The world beneath the plugin: the session's folder, a fake `git` that knows
- * REMOTES, a fake `gh`, and a record of what the plugin showed and ran.
+ * REMOTES, a fake `gh`, a fake `open` (exiting `openExit`), and a record of
+ * what the plugin showed and ran.
  */
-const world = (on: On, folder: { cwd: string }, gh: (argv: readonly string[]) => Ran) => {
+const world = (
+  on: On,
+  folder: { cwd: string },
+  gh: (argv: readonly string[]) => Ran,
+  openExit = 0,
+) => {
   const seen = {
     statuses: [] as (string | undefined)[],
     toasts: [] as string[],
     prompts: [] as string[],
     ghCalls: [] as string[][],
+    /** Each link handed to `open`, parsed. */
+    opens: [] as URL[],
   }
 
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -104,7 +112,10 @@ const world = (on: On, folder: { cwd: string }, gh: (argv: readonly string[]) =>
   on('process.run', ($, e) => {
     const [command, ...args] = e.argv
     let ran: Ran
-    if (command === 'git') {
+    if (command === '/usr/bin/open') {
+      seen.opens.push(new URL(args[0] ?? ''))
+      ran = { exitCode: openExit, stdout: '', stderr: openExit === 0 ? '' : 'no handler' }
+    } else if (command === 'git') {
       const remote = REMOTES[e.init?.cwd ?? '']
       ran =
         remote === undefined
@@ -263,9 +274,18 @@ test('the pane lists the PR and Ask Claude queues a prompt', async ($, on) => {
     await ui.unmount()
   }
 
-  expect(seen.prompts.length).toBe(2)
+  // The terminal asks in this conversation.
+  expect(seen.prompts.length).toBe(1)
   expect(seen.prompts[0]).toContain('acme/app#1')
   expect(seen.prompts[0]).toContain('unit tests')
+  // The desktop app opens a new session on the same folder, with the same prompt.
+  expect(seen.opens.length).toBe(1)
+  expect(seen.opens[0]?.href.startsWith('claude://code/new?')).toBe(true)
+  expect(seen.opens[0]?.searchParams.get('folder')).toBe('/code/app')
+  expect(seen.opens[0]?.searchParams.get('q')).toBe(seen.prompts[0])
+  expect(seen.toasts.at(-1)).toBe(
+    'Opened a new session to look into failing CI on app#1; send the prompt there to start',
+  )
 })
 
 const mountPane = ($: Engine, surface: 'terminal' | 'desktop') =>
@@ -299,11 +319,12 @@ test('a conflicting PR of mine gets one Ask Claude that leaves the fix to Claude
     await ui.unmount()
   }
 
-  expect(seen.prompts.length).toBe(2)
+  expect(seen.prompts.length).toBe(1)
   expect(seen.prompts[0]).toContain('has merge conflicts with `main`')
   expect(seen.prompts[0]).toContain('decide the best way to fix it')
+  expect(seen.opens.map(u => u.searchParams.get('q'))).toEqual([seen.prompts[0]])
   expect(seen.toasts.at(-1)).toBe(
-    'Asked Claude to fix the merge conflicts on app#1; it starts once the session is idle',
+    'Opened a new session to fix the merge conflicts on app#1; send the prompt there to start',
   )
 
   role = 'review'
@@ -328,11 +349,32 @@ test('a PR of mine that is behind main gets the same Ask Claude', async ($, on) 
   await ui.press({ key: `ask-update:${URL}` })
   await ui.unmount()
 
-  expect(seen.prompts.length).toBe(1)
-  expect(seen.prompts[0]).toContain('is behind `main`')
-  expect(seen.prompts[0]).toContain('gh pr update-branch 1 --repo acme/app')
+  // On the desktop: a new session, nothing asked in this conversation.
+  expect(seen.prompts).toEqual([])
+  const q = seen.opens[0]?.searchParams.get('q') ?? ''
+  expect(q).toContain('is behind `main`')
+  expect(q).toContain('gh pr update-branch 1 --repo acme/app')
   expect(seen.toasts.at(-1)).toBe(
-    'Asked Claude to bring it up to date with main on app#1; it starts once the session is idle',
+    'Opened a new session to bring it up to date with main on app#1; send the prompt there to start',
+  )
+})
+
+test('if the desktop app cannot be opened, Ask Claude asks in this conversation', async ($, on) => {
+  const clock = mock.clock(on)
+  const seen = world(on, { cwd: '/code/app' }, () => answer(FAILING), 1)
+
+  await $.session.start(START)
+  await clock.settle()
+
+  const ui = await mountPane($, 'desktop')
+  await ui.press({ key: 'ask-ci:https://github.com/acme/app/pull/1' })
+  await ui.unmount()
+
+  expect(seen.opens.length).toBe(1)
+  expect(seen.prompts.length).toBe(1)
+  expect(seen.prompts[0]).toContain('unit tests')
+  expect(seen.toasts.at(-1)).toBe(
+    'Asked Claude to look into failing CI on app#1; it starts once the session is idle',
   )
 })
 

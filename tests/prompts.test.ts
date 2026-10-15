@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { ciPrompt, stalenessOf, updatePrompt } from '../hooks/prompts'
+import {
+  LINK_PROMPT_LIMIT,
+  ciPrompt,
+  newSessionUrl,
+  stalenessOf,
+  updatePrompt,
+} from '../hooks/prompts'
 import { pr } from './fixtures'
 
 describe('ciPrompt', () => {
@@ -48,5 +54,21 @@ describe('updatePrompt', () => {
     expect(text).toContain('`gh pr update-branch 1 --repo acme/app`')
     expect(text).toContain("If updating isn't needed")
     expect(text).not.toContain('conflict')
+  })
+})
+
+describe('newSessionUrl', () => {
+  test('names the folder and the prompt, both encoded', () => {
+    const url = newSessionUrl('/Users/me/My Code/app', 'Fix `main` & tell me: why?')
+    const parsed = new URL(url)
+    expect(parsed.protocol).toBe('claude:')
+    expect(parsed.host + parsed.pathname).toBe('code/new')
+    expect(parsed.searchParams.get('folder')).toBe('/Users/me/My Code/app')
+    expect(parsed.searchParams.get('q')).toBe('Fix `main` & tell me: why?')
+  })
+
+  test('cuts the prompt to what the app takes', () => {
+    const q = new URL(newSessionUrl('/x', 'a'.repeat(20_000))).searchParams.get('q')
+    expect(q?.length).toBe(LINK_PROMPT_LIMIT)
   })
 })

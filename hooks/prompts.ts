@@ -46,3 +46,15 @@ export const updatePrompt = (p: Pr, why: Staleness): string => {
     'Do not push, force-push or update the PR on GitHub without asking me first.',
   ].join('\n')
 }
+
+/** The most prompt text the desktop app takes from a link. */
+export const LINK_PROMPT_LIMIT = 14_336
+
+/**
+ * The desktop app's link for a new Claude Code session on `folder` with
+ * `prompt` in its composer; the person sends it from there.
+ */
+export const newSessionUrl = (folder: string, prompt: string): string =>
+  `claude://code/new?folder=${encodeURIComponent(folder)}&q=${encodeURIComponent(
+    prompt.slice(0, LINK_PROMPT_LIMIT),
+  )}&source=pr-watch`

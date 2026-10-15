@@ -24,7 +24,9 @@ A Claude Code mod that keeps an eye on the GitHub pull requests of the repo you'
   - **Size:** additions and deletions, files changed, and when the PR was last updated
 
   Press **Refresh** (`r`) to check right away.
-- **Ask Claude.** Your own PRs get buttons that queue a prompt for Claude. Nothing runs unless you press one, and Claude is told not to push or change the PR without asking you first.
+- **Ask Claude.** Your own PRs get buttons that hand Claude a prompt about the problem. Claude is told not to push or change the PR without asking you first.
+  - **In the desktop app,** the button opens a **new Claude Code session in the same folder** with the prompt already in its composer. Your current conversation is left alone, and nothing runs until you send the prompt there.
+  - **In a terminal,** or if the desktop app can't be opened, the prompt is queued in the current conversation and starts once it's idle.
   - **Failing CI:** **Ask Claude** has Claude read the failing logs with `gh` and propose a fix.
   - **Merge conflict or behind main:** **Ask Claude** has Claude look into the problem and choose the fix itself. It picks between merging main in, rebasing onto main, or GitHub's update-branch (when the PR is only behind), and tells you which it chose and why. It weighs the repo's conventions, branch protection, and existing reviews that a force-push would disrupt. If a PR that's only behind doesn't need updating, Claude says so and stops. Claude works on the branch in a separate git worktree, so your current checkout is left alone, and it runs the tests and type-check. For conflicts, it shows you how it resolved each file.
 - **Merge.** Your approved PRs that GitHub would merge right now get a merge button, labeled like GitHub's own (**Squash and merge**, **Merge**, or **Rebase and merge**, whichever GitHub preselects for you in that repo).

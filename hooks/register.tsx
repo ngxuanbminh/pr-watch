@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Color, EngineInterface, Register } from 'claude-code'
+import type { Color, EngineInterface, Register, RenderSurface } from 'claude-code'
 
 import type { CiState, MergeMethod, Pr, Snapshot } from '../types'
 import { ciLine, mergeLine, reviewLine, sizeLine } from './details'
@@ -8,7 +8,7 @@ import { CI_ICON, changes, ref, settle, summary, toastText } from './diff'
 import { GH_CANDIDATES, ghArgs, parsePrs, parseRemote, reasonOf } from './github'
 import type { FetchResult } from './github'
 import { canMerge, mergeArgs, mergeFailure, mergeLabel } from './merge'
-import { ciPrompt, stalenessOf, updatePrompt } from './prompts'
+import { ciPrompt, newSessionUrl, stalenessOf, updatePrompt } from './prompts'
 
 const PANE = 'pr-watch'
 const snapshot = atom({ plugin: 'pr-watch', key: 'latest' } as const, null)
@@ -171,8 +171,32 @@ async function poll($: EngineInterface): Promise<void> {
   }
 }
 
-/** Queues `text` as the person's own prompt; `what` names the ask in the toast. */
-function askClaude($: EngineInterface, p: Pr, text: string, what: string): void {
+/**
+ * Hands `text` to Claude; `what` names the ask in the toast. In the desktop
+ * app it opens a new Claude Code session on this session's folder with the
+ * prompt in its composer, for the person to send; elsewhere, or if that
+ * fails, it queues the prompt in this conversation.
+ */
+async function askClaude(
+  $: EngineInterface,
+  p: Pr,
+  text: string,
+  what: string,
+  surface: RenderSurface,
+): Promise<void> {
+  if (surface === 'desktop') {
+    try {
+      const url = newSessionUrl(await $.session.cwd(), text)
+      const ran = await $.process.run(['/usr/bin/open', url], { timeoutMs: 10_000 })
+      if (ran.exitCode === 0) {
+        $.ui.toast(`Opened a new session to ${what} on ${ref(p)}; send the prompt there to start`)
+        return
+      }
+    } catch {
+      // No `open` on this machine: ask in this conversation instead.
+    }
+  }
+
   void $.prompt
     .submit({ text, asUser: true })
     .catch(() => $.ui.toast(`pr-watch: could not queue the prompt for ${ref(p)}`))
@@ -291,7 +315,7 @@ export const register: Register = (on, options) => {
               <Button
                 key={`ask-ci:${p.url}`}
                 label="Ask Claude"
-                onPress={() => askClaude($, p, ciPrompt(p), 'look into failing CI')}
+                onPress={() => askClaude($, p, ciPrompt(p), 'look into failing CI', e.surface)}
               />
             </Box>
           )}
@@ -311,6 +335,7 @@ export const register: Register = (on, options) => {
                       stale === 'conflict'
                         ? 'fix the merge conflicts'
                         : `bring it up to date with ${p.baseBranch || 'main'}`,
+                      e.surface,
                     )
                   }
                 />
