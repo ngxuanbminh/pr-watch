@@ -8,7 +8,7 @@ import { CI_ICON, changes, ref, settle, summary, toastText } from './diff'
 import { GH_CANDIDATES, ghArgs, parsePrs, parseRemote, reasonOf } from './github'
 import type { FetchResult } from './github'
 import { canMerge, mergeArgs, mergeFailure, mergeLabel } from './merge'
-import { ciPrompt, newSessionUrl, stalenessOf, updatePrompt } from './prompts'
+import { ciPrompt, newSessionUrl, reviewPrompt, stalenessOf, updatePrompt } from './prompts'
 
 const PANE = 'pr-watch'
 const snapshot = atom({ plugin: 'pr-watch', key: 'latest' } as const, null)
@@ -320,6 +320,15 @@ export const register: Register = (on, options) => {
             </Box>
           )}
           {detail('Review', reviewLine(p))}
+          {p.role === 'review' && (
+            <Box paddingLeft={10}>
+              <Button
+                key={`ask-review:${p.url}`}
+                label="Ask Claude"
+                onPress={() => askClaude($, p, reviewPrompt(p), 'review the PR', e.surface)}
+              />
+            </Box>
+          )}
           {detail('Merge', mergeLine(p))}
           {(stale !== undefined || mergeWith !== null) && (
             <Box paddingLeft={10} flexDirection="row" gap={1} flexWrap="wrap">

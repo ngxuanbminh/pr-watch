@@ -465,3 +465,36 @@ test('no merge button on a review request, even an approved one', async ($, on) 
   expect(await ui.find({ key: 'merge:https://github.com/acme/app/pull/1' })).toBeUndefined()
   await ui.unmount()
 })
+
+test('a review request gets an Ask Claude that asks for a review', async ($, on) => {
+  const clock = mock.clock(on)
+  const URL = 'https://github.com/acme/app/pull/1'
+  let role: 'mine' | 'review' = 'review'
+  const seen = world(on, { cwd: '/code/app' }, () => answer(PASSING, 'acme/app', { role }))
+
+  await $.session.start(START)
+  await clock.settle()
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await mountPane($, surface)
+    await ui.press({ key: `ask-review:${URL}` })
+    await ui.unmount()
+  }
+
+  // The terminal asks here; the desktop app opens a new session with the same prompt.
+  expect(seen.prompts.length).toBe(1)
+  expect(seen.prompts[0]).toContain('Review pull request acme/app#1')
+  expect(seen.prompts[0]).toContain('my review is requested')
+  expect(seen.opens.map(u => u.searchParams.get('q'))).toEqual([seen.prompts[0]])
+  expect(seen.toasts.at(-1)).toBe(
+    'Opened a new session to review the PR on app#1; send the prompt there to start',
+  )
+
+  // My own PRs get no review button.
+  role = 'mine'
+  await clock.advance(120_000)
+  const ui = await mountPane($, 'terminal')
+  expect(await ui.find({ text: /Your PRs \(1\)/ })).toBeDefined()
+  expect(await ui.find({ key: `ask-review:${URL}` })).toBeUndefined()
+  await ui.unmount()
+})

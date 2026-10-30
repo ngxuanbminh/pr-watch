@@ -4,6 +4,7 @@ import {
   LINK_PROMPT_LIMIT,
   ciPrompt,
   newSessionUrl,
+  reviewPrompt,
   stalenessOf,
   updatePrompt,
 } from '../hooks/prompts'
@@ -70,5 +71,31 @@ describe('newSessionUrl', () => {
   test('cuts the prompt to what the app takes', () => {
     const q = new URL(newSessionUrl('/x', 'a'.repeat(20_000))).searchParams.get('q')
     expect(q?.length).toBe(LINK_PROMPT_LIMIT)
+  })
+})
+
+describe('reviewPrompt', () => {
+  const asked = pr({ role: 'review', author: 'alice', number: 7, title: 'Add caching' })
+
+  test('names the PR, reads it with gh, and reports back without posting', () => {
+    const text = reviewPrompt(asked)
+    expect(text).toContain(
+      'Review pull request acme/app#7 "Add caching" (https://github.com/acme/app/pull/1) by alice, `fix-thing` into `main`',
+    )
+    expect(text).toContain('`gh pr diff 7 --repo acme/app`')
+    expect(text).toContain('gh api repos/acme/app/pulls/7/comments')
+    expect(text).toContain('separate git worktree')
+    expect(text).toContain('ranked by severity, each with file:line')
+    expect(text).toContain("whether you'd approve, request changes or just comment")
+    expect(text).toContain('Do not post a review, comment, approval or any other change on GitHub')
+    expect(text).not.toContain('dependency update')
+  })
+
+  test('a dependency bot gets the changelog check, numbered in', () => {
+    for (const author of ['dependabot', 'renovate[bot]', 'app/dependabot']) {
+      const text = reviewPrompt({ ...asked, author })
+      expect(text).toContain("3. It's a dependency update: check the changelog")
+      expect(text).toContain('4. Tell me what the PR does')
+    }
   })
 })

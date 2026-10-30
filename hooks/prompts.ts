@@ -47,6 +47,30 @@ export const updatePrompt = (p: Pr, why: Staleness): string => {
   ].join('\n')
 }
 
+/** A dependency bot's PR: dependabot, renovate, or any `[bot]` or GitHub App author. */
+const isBot = (author: string): boolean => /^(dependabot|renovate|app\/)|\[bot\]$/i.test(author)
+
+/** The prompt behind Ask Claude on a PR whose review is requested from me. */
+export const reviewPrompt = (p: Pr): string => {
+  const pr = `${p.number} --repo ${p.repo}`
+  const steps = [
+    `Read it: \`gh pr view ${pr} --comments\`, \`gh pr diff ${pr}\` and \`gh pr checks ${pr}\`, and the inline review threads (\`gh api repos/${p.repo}/pulls/${p.number}/comments\`), so you don't repeat what others already said.`,
+    'If you need to run the code, check the branch out in a separate git worktree so my current checkout and any uncommitted changes stay untouched.',
+    ...(isBot(p.author)
+      ? [
+          "It's a dependency update: check the changelog of what it bumps for breaking changes, and whether any failing checks come from the bump.",
+        ]
+      : []),
+    "Tell me what the PR does in a few sentences, the issues you found ranked by severity, each with file:line, and whether you'd approve, request changes or just comment, and why.",
+  ]
+
+  return [
+    `Review pull request ${p.repo}#${p.number} "${p.title}" (${p.url}) by ${p.author}, \`${p.branch}\` into \`${p.baseBranch || 'main'}\`; my review is requested.`,
+    ...steps.map((step, i) => `${i + 1}. ${step}`),
+    'Do not post a review, comment, approval or any other change on GitHub without asking me first.',
+  ].join('\n')
+}
+
 /** The most prompt text the desktop app takes from a link. */
 export const LINK_PROMPT_LIMIT = 14_336
 

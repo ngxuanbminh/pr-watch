@@ -24,11 +24,12 @@ A Claude Code mod that keeps an eye on the GitHub pull requests of the repo you'
   - **Size:** additions and deletions, files changed, and when the PR was last updated
 
   Press **Refresh** (`r`) to check right away.
-- **Ask Claude.** Your own PRs get buttons that hand Claude a prompt about the problem. Claude is told not to push or change the PR without asking you first.
+- **Ask Claude.** Buttons that hand Claude a prompt. Claude is told not to push, post or change anything on GitHub without asking you first.
   - **In the desktop app,** the button opens a **new Claude Code session in the same folder** with the prompt already in its composer. Your current conversation is left alone, and nothing runs until you send the prompt there.
   - **In a terminal,** or if the desktop app can't be opened, the prompt is queued in the current conversation and starts once it's idle.
-  - **Failing CI:** **Ask Claude** has Claude read the failing logs with `gh` and propose a fix.
-  - **Merge conflict or behind main:** **Ask Claude** has Claude look into the problem and choose the fix itself. It picks between merging main in, rebasing onto main, or GitHub's update-branch (when the PR is only behind), and tells you which it chose and why. It weighs the repo's conventions, branch protection, and existing reviews that a force-push would disrupt. If a PR that's only behind doesn't need updating, Claude says so and stops. Claude works on the branch in a separate git worktree, so your current checkout is left alone, and it runs the tests and type-check. For conflicts, it shows you how it resolved each file.
+  - **Failing CI** (your PRs): **Ask Claude** has Claude read the failing logs with `gh` and propose a fix.
+  - **Merge conflict or behind main** (your PRs): **Ask Claude** has Claude look into the problem and choose the fix itself. It picks between merging main in, rebasing onto main, or GitHub's update-branch (when the PR is only behind), and tells you which it chose and why. It weighs the repo's conventions, branch protection, and existing reviews that a force-push would disrupt. If a PR that's only behind doesn't need updating, Claude says so and stops. Claude works on the branch in a separate git worktree, so your current checkout is left alone, and it runs the tests and type-check. For conflicts, it shows you how it resolved each file.
+  - **Review requested:** **Ask Claude** has Claude review the PR. It reads the description, diff, checks and existing review threads with `gh`, and checks the branch out in a separate worktree if it needs to run the code. It reports what the PR does, the issues it found ranked by severity with `file:line`, and whether it would approve, request changes or comment. For dependency bots like dependabot, it also checks the changelog for breaking changes and whether failing checks come from the bump.
 - **Merge.** Your approved PRs that GitHub would merge right now get a merge button, labeled like GitHub's own (**Squash and merge**, **Merge**, or **Rebase and merge**, whichever GitHub preselects for you in that repo).
   - "Right now" means CI is not failing or running, there's no conflict, the PR is not a draft, and branch rules don't block it.
   - Pressing it only asks: *Squash and merge #405 into main? [Confirm] [Cancel]*. Nothing merges until you press **Confirm**.
@@ -87,6 +88,7 @@ Use only one of the two install methods; otherwise the mod loads twice.
 | Fix failing CI | **Ask Claude** under a failing PR of yours |
 | Fix a conflict or catch up with main | **Ask Claude** under the Merge line of a PR of yours that conflicts or is behind |
 | Merge an approved PR | The merge button under its Merge line, then **Confirm** |
+| Review a PR you're asked to review | **Ask Claude** under its Review line |
 
 In the terminal, the pane opens docked beside the conversation when the window is wide enough, and inline when it isn't.
 
